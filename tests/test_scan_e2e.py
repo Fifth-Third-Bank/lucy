@@ -15,6 +15,7 @@ import sys
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -47,6 +48,15 @@ CATEGORY_FOR_FAMILY = {
 
 
 class ScanEndToEndTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._original_custody_home = os.environ.get("LUCY_CUSTODY_HOME")
+
+    def tearDown(self) -> None:
+        if self._original_custody_home is None:
+            os.environ.pop("LUCY_CUSTODY_HOME", None)
+        else:
+            os.environ["LUCY_CUSTODY_HOME"] = self._original_custody_home
+
     def test_full_pipeline_reaches_certified(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["LUCY_CUSTODY_HOME"] = str(Path(tmp) / "custody-home")
@@ -220,10 +230,33 @@ class ScanEndToEndTests(unittest.TestCase):
                 "chain through a refuted hop must be dropped WITH a receipt",
             )
 
-            # Resume after completion: findings.jsonl exists (no reviewer
-            # relaunch) and custody is gone (scored), so resume must rebuild
-            # the verdict from the existing recall receipt — no Claude call.
-            code, resumed = resume_trial(results, trial["run_id"], certify=False)
+            # Resume after completion: no reviewer relaunch, but this test
+            # called the gate directly and therefore deliberately retained
+            # custody for rescoring. Simulate any clean-copy disposition
+            # court; deterministic tests never depend on provider installs,
+            # logins, or spend.
+            def disposition_response(
+                _host, *, system, task, workspace, allow_edit=False, max_turns=60
+            ):
+                del system, workspace, allow_edit, max_turns
+                candidate_id = task.split("CANDIDATE_ID=", 1)[1].splitlines()[0]
+                return json.dumps(
+                    {
+                        "candidate_id": candidate_id,
+                        "clean_verdict": "PRESENT",
+                        "basis": "fixture host confirmed the claim on clean bytes",
+                    }
+                )
+
+            with (
+                patch("lucy.runtime.trial.require_host_tools"),
+                patch(
+                    "lucy.runtime.host.ClaudeAgentHost.run_agent",
+                    autospec=True,
+                    side_effect=disposition_response,
+                ),
+            ):
+                code, resumed = resume_trial(results, trial["run_id"], certify=False)
             self.assertEqual(code, 0)
             self.assertEqual(resumed["status"], "PASS")
 

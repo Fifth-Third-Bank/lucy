@@ -277,19 +277,13 @@ def generate_certification(
         unit_id: quiet_threshold(unit_loc_by_id.get(unit_id, 0))
         for unit_id in unit_file_lists
     }
-    quiet_units = 0
-    for unit_id, files in unit_file_lists.items():
-        file_set = set(files)
-        bar = quiet_thresholds[unit_id]
-        counts = []
-        for entry in pass_history:
-            new_serious = [
-                cid for cid in entry.get("new_serious", [])
-                if any(row["id"] == cid and row["path"] in file_set for row in findings)
-            ]
-            counts.append(len(new_serious))
-        if len(counts) >= 2 and all(count <= bar for count in counts[-2:]):
-            quiet_units += 1
+    # C2 consumes the exact reducer used by live orchestration, progress, and
+    # recapture. A private seal-side recomputation previously disagreed with
+    # live scheduling after severity upgrades and light confirmation laps.
+    from lucy.runtime.artifacts import unit_quiet_map
+
+    quiet_state = unit_quiet_map(run_dir)
+    quiet_units = sum(bool(quiet_state.get(unit_id, False)) for unit_id in unit_file_lists)
 
     m_ok, m_seed, m_checked = _m_audit(findings, workspace, run_id)
     recall_found = int(recall.get("found", 0))
@@ -785,6 +779,8 @@ CLOSURE-BASIS: STANDARD-095
             next_steps = [
                 "recapture runs blind cure laps until recall is whole (every certified run so far needed at least one recapture):",
                 f"    {recapture_cmd}",
+                "if a missed plant may be defective, get an evidence-based verdict before attesting it:",
+                f"    {adjudicate_cmd}",
             ]
     else:
         next_steps = [

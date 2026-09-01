@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 - 2026-09-01
+## 1.1.0 - 2026-09-01
 
 Initial public release of LUCY, an agentic source-code vulnerability scanning
 harness for large, complex applications.
@@ -16,6 +16,14 @@ harness for large, complex applications.
   artifacts.
 - Gated JSON reports, human-readable findings, certification receipts, and
   SARIF export.
-- Claude Code support and an experimental OpenAI-compatible host.
+- Claude Code support by default, saved-login Codex CLI support through
+  `--host codex`, and an experimental OpenAI-compatible API host. Codex does
+  not require Claude or an API key and uses launcher-owned, workspace-confined
+  lanes with resumable receipts and token/timing accounting.
 - Curated public-release metadata and generic demonstration fixtures, with
   generated caches and private ownership metadata excluded from archives.
+- Installation validates Python 3.11+, Git, the required tree-sitter grammar
+  pack, and the presence of either Claude Code or Codex CLI before writing
+  files. Ripgrep is an optional Codex navigation accelerator. Debian/Ubuntu
+  venv setup, the Codex-on-Linux `bubblewrap` sandbox prerequisite, and the
+  release-only `ruff` development extra are explicit.

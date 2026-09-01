@@ -51,7 +51,16 @@ class SummaryRenderTests(unittest.TestCase):
         self.assertIn("duration: 3h12m", text)
 
     def test_refused_check_shows_red_x_and_gate_commentary(self):
-        outcome = _outcome(certified=False, seal_token=None)
+        outcome = _outcome(
+            certified=False,
+            seal_token=None,
+            next_steps=[
+                "recapture the missed plants:",
+                "    lucy recapture --run r-test --results /tmp/results",
+                "adjudicate whether a missed plant is defective:",
+                "    lucy adjudicate --run r-test --results /tmp/results",
+            ],
+        )
         outcome["checks"][1] = {
             "id": "C2", "name": "QUIET", "ok": False,
             "detail": "C2 QUIET: 5/8 units show two consecutive quiet passes",
@@ -61,6 +70,9 @@ class SummaryRenderTests(unittest.TestCase):
         self.assertIn("5/8 units show two consecutive quiet passes", text)
         self.assertIn("RESULT: PROCESS-COMPLETE", text)
         self.assertIn("review complete, certification pending", text)
+        self.assertIn(
+            "lucy adjudicate --run r-test --results /tmp/results", text
+        )
 
     def test_all_checks_pass_but_maudit_fails_names_reason(self):
         text = render_certification_summary(

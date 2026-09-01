@@ -66,6 +66,86 @@ class ArtifactPipelineTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+class ConvergenceReducerTests(unittest.TestCase):
+    def _estate(self, root: Path) -> tuple[Path, Path, Path]:
+        workspace = root / "workspace"
+        results = root / "results"
+        run = results / "runs" / "r-test"
+        staging = run / "staging"
+        workspace.mkdir()
+        staging.mkdir(parents=True)
+        (workspace / "a.py").write_text("print('a')\n", encoding="utf-8")
+        (staging / "UNIT-001.txt").write_text("a.py\n", encoding="utf-8")
+        (staging / "UNITS.json").write_text(
+            json.dumps({"units": [{"id": "UNIT-001", "loc": 1}]}),
+            encoding="utf-8",
+        )
+        return workspace, results, run
+
+    @staticmethod
+    def _row(severity: str) -> str:
+        return json.dumps(
+            {
+                "path": "a.py",
+                "line": 1,
+                "lens": "L1-auth",
+                "category": "missing-authorization",
+                "severity": severity,
+                "title": "authorization is not enforced",
+                "evidence": "kind-only",
+                "reach_basis": "a.py:1",
+            }
+        ) + "\n"
+
+    def test_severity_upgrade_is_new_serious_on_upgrade_pass(self) -> None:
+        from lucy.runtime.artifacts import merge_candidates
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace, results, run = self._estate(Path(directory))
+            staging = run / "staging"
+            (staging / "lane-pass1-L1-auth-UNIT-001.jsonl").write_text(
+                self._row("MEDIUM"), encoding="utf-8"
+            )
+            (staging / "lane-pass2-L1-auth-UNIT-001.jsonl").write_text(
+                self._row("HIGH"), encoding="utf-8"
+            )
+            candidates = merge_candidates(run, workspace, results)
+            history = json.loads(
+                (run / "receipts" / "PASS_HISTORY.json").read_text(encoding="utf-8")
+            )["passes"]
+            self.assertEqual([], history[0]["new_serious"])
+            self.assertEqual([candidates[0]["id"]], history[1]["new_serious"])
+
+    def test_full_then_zero_light_confirmation_closes_unit(self) -> None:
+        from lucy.runtime.artifacts import merge_candidates, unit_convergence_map
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace, results, run = self._estate(Path(directory))
+            staging = run / "staging"
+            for lens in ("L1-auth", "L2-secrets", "L3-injection", "L4-infra"):
+                (staging / f"lane-pass1-{lens}-UNIT-001.jsonl").write_text("", encoding="utf-8")
+            (staging / "lane-pass2-L2-secrets-UNIT-001.jsonl").write_text("", encoding="utf-8")
+            merge_candidates(run, workspace, results)
+            self.assertEqual("quiet", unit_convergence_map(run)["UNIT-001"])
+
+    def test_confirmation_finding_reopens_and_sweep_never_confirms(self) -> None:
+        from lucy.runtime.artifacts import merge_candidates, unit_convergence_map
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace, results, run = self._estate(Path(directory))
+            staging = run / "staging"
+            for lens in ("L1-auth", "L2-secrets", "L3-injection", "L4-infra"):
+                (staging / f"lane-pass1-{lens}-UNIT-001.jsonl").write_text("", encoding="utf-8")
+            (staging / "lane-sweep-L1-auth.jsonl").write_text("", encoding="utf-8")
+            merge_candidates(run, workspace, results)
+            self.assertEqual("confirm", unit_convergence_map(run)["UNIT-001"])
+            (staging / "lane-pass2-L3-injection-UNIT-001.jsonl").write_text(
+                self._row("HIGH"), encoding="utf-8"
+            )
+            merge_candidates(run, workspace, results)
+            self.assertEqual("loud", unit_convergence_map(run)["UNIT-001"])
+
 class SweepQuietAccountingTests(unittest.TestCase):
     def test_sweep_serious_rows_enter_pass_history_after_pass_one(self) -> None:
         """A serious sweep finding must be visible to the quiet law (C2):

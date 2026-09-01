@@ -1,7 +1,7 @@
 ---
 name: lucy
 description: Run a Claude Code-only verified source review using unit-partitioned independent reader lenses, independent courts, quiet convergence, receipts, and externally scored recall tests. Use only in a workspace prepared by the lucy launcher.
-compatibility: Claude Code 2.1.245+ and Python 3.10+.
+compatibility: Claude Code 2.1.245+ and Python 3.11+.
 allowed-tools: Read, Grep, Glob, Write, Agent(lucy-reader), Agent(lucy-court), ScheduleWakeup, Bash(git status *), Bash(git rev-parse *), Bash(git ls-files *), Bash(lucy-units *), Bash(lucy-merge *), Bash(lucy-finalize *), Bash(lucy-toolbox *)
 disable-model-invocation: true
 ---

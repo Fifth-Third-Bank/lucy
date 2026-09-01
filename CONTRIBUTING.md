@@ -21,7 +21,7 @@ All code changes are handled by the project maintainers.
 - **Expected vs. actual behavior**
 - **Environment details**, such as:
   - LUCY version or commit
-  - Claude Code version (`claude --version`)
+  - selected host and version (`claude --version` or `codex --version`)
   - Python version and operating system
 - **Run evidence** where relevant:
   - the final verdict line (`REVIEW-COMPLETE ... CERTIFIED` / `PROCESS-COMPLETE`)

@@ -266,6 +266,10 @@ class ShadowDiagnosisTests(unittest.TestCase):
             'advice = "the recall self-test needs curing'
         )[0]
         self.assertIn("adjudicate_cmd", exhausted_branch)
+        normal_branch = source.split(
+            'advice = "the recall self-test needs curing'
+        )[1].split("else:")[0]
+        self.assertIn("adjudicate_cmd", normal_branch)
 
 
 class LocusDriftTests(unittest.TestCase):

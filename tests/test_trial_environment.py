@@ -47,7 +47,9 @@ class TrialEnvironmentTests(unittest.TestCase):
         self.assertEqual("1", environment["CLAUDE_CODE_DISABLE_CLAUDE_MDS"])
 
     def test_public_launcher_defaults_to_claude_planter(self) -> None:
-        self.assertEqual("claude", inspect.signature(launch_trial).parameters["planter"].default)
+        signature = inspect.signature(launch_trial)
+        self.assertEqual("claude", signature.parameters["planter"].default)
+        self.assertEqual("claude", signature.parameters["host"].default)
 
 
 if __name__ == "__main__":

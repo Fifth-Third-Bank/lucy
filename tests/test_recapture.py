@@ -8,12 +8,13 @@ import sys
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lucy.runtime.artifacts import finalize, merge_candidates  # noqa: E402
-from lucy.runtime.recapture import run_recapture, unit_bounds  # noqa: E402
+from lucy.runtime.recapture import restore_courts, run_recapture, unit_bounds  # noqa: E402
 from lucy.runtime.seal import generate_certification  # noqa: E402
 from lucy.runtime.trial import (  # noqa: E402
     prepare_fixture_trial,
@@ -48,8 +49,55 @@ def serious_row(path: str) -> dict:
 
 
 class RecaptureTests(unittest.TestCase):
+    def test_restored_court_preserves_original_proposed_severity(self) -> None:
+        from lucy.runtime.orchestrator import court_needs_dispatch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            candidate = {
+                "id": "LUCY-1",
+                "severity": "HIGH",
+            }
+            finding = {
+                "id": "LUCY-1",
+                "status": "verified",
+                # The first court lowered the proposal from HIGH to MEDIUM.
+                "severity": "MEDIUM",
+            }
+            (run_dir / "candidates.jsonl").write_text(
+                json.dumps(candidate) + "\n", encoding="utf-8"
+            )
+            (run_dir / "findings.jsonl").write_text(
+                json.dumps(finding) + "\n", encoding="utf-8"
+            )
+
+            restore_courts(run_dir)
+
+            verdict_file = run_dir / "staging" / "courts" / "LUCY-1.json"
+            verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
+            self.assertEqual("HIGH", verdict["proposed_severity"])
+            self.assertFalse(
+                court_needs_dispatch(
+                    {"id": "LUCY-1", "severity": "HIGH"}, verdict_file
+                )
+            )
+            self.assertTrue(
+                court_needs_dispatch(
+                    {"id": "LUCY-1", "severity": "CRITICAL"}, verdict_file
+                )
+            )
+
     def test_below_bar_run_recaptures_to_certified(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            original_custody = os.environ.get("LUCY_CUSTODY_HOME")
+
+            def restore_custody_home() -> None:
+                if original_custody is None:
+                    os.environ.pop("LUCY_CUSTODY_HOME", None)
+                else:
+                    os.environ["LUCY_CUSTODY_HOME"] = original_custody
+
+            self.addCleanup(restore_custody_home)
             os.environ["LUCY_CUSTODY_HOME"] = str(Path(tmp) / "custody-home")
             results = Path(tmp) / "results"
             trial = prepare_fixture_trial(
@@ -162,8 +210,15 @@ class RecaptureTests(unittest.TestCase):
 
             from unittest.mock import patch
 
-            with patch(
-                "lucy.runtime.host.ClaudeAgentHost", return_value=DispositionHost()
+            # Host availability is a separate preflight contract; this
+            # deterministic pipeline test must pass with either provider,
+            # both, or neither installed.
+            with (
+                patch("lucy.runtime.trial.require_host_tools"),
+                patch(
+                    "lucy.runtime.host.ClaudeAgentHost",
+                    return_value=DispositionHost(),
+                ),
             ):
                 code, verdict = resume_trial(results, trial["run_id"], certify=True)
             certification = verdict["certification"]

@@ -5,6 +5,7 @@ __pycache__/
 docs/PORT_LOG.md
 
 # local security-review outputs
+/.glitch-state/
 /.scanner-state/
 /FINDINGS.md
 /findings.jsonl

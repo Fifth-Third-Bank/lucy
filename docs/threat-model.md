@@ -6,7 +6,7 @@
 - vulnerability findings and court verdicts;
 - temporary recall-test answer keys;
 - historical priors (excluded from the initial trial);
-- Claude Code credentials and local tool permissions;
+- selected-host credentials and local tool permissions;
 - deterministic toolbox and gate integrity.
 
 ## Trust Boundaries
@@ -18,7 +18,7 @@ are untrusted judgment components whose output is structurally validated;
 selected finalized artifacts then receive best-effort masking for recognized
 patterns.
 
-The trial launcher is the recall-test custodian. A separate ephemeral Claude
+The trial launcher is the recall-test custodian. A separate ephemeral host
 process plants canaries before the reviewer starts. The launcher validates the
 diff and answer-key schema, gives the orchestrator only a commitment, scores
 after the reviewer exits, and destroys custody. The orchestrator is never
@@ -34,22 +34,29 @@ trusted with loci or planter context.
 | Literal secret or personal data in narrative and report artifacts | Agent contracts prohibit literal values; finalization applies best-effort masking for recognized credentials, email addresses, and formatted U.S. SSNs, and the report gate rejects selected recognized credential patterns. Outputs remain confidential; this is not comprehensive PII anonymization or DLP. |
 | Canary leakage from orchestrator to readers | Separate no-history planter process, marker-free source, static briefs, fresh agents, no key/locus in run state. |
 | Orchestrator reads answer key early | Custody under ~/.lucy/custody (0700), outside workspace and results, not passed in prompt or environment, external post-session scoring. |
-| Planter exceeds its role | Claude safe mode; custom system prompt; only Read/Edit/Grep/Glob; no shell/network/skills/agents; structured output; deterministic diff, path, syntax, family, and marker validation. |
+| Planter exceeds its role | Custom system prompt; workspace-only read/write; no network, project instructions, plugins, or subagents; structured output; deterministic diff, path, syntax, family, and marker validation. |
 | Toolbox tampering | Allowlisted imports, per-file SHA-256 manifest, startup consistency check (integrity against accidental drift, not a signature: an attacker who can rewrite the toolbox can rewrite the manifest), shipped self-tests. |
-| Claude executes application or reaches network | Skill forbids builds, package managers, services, endpoints, WebFetch/WebSearch, and target-provided tools. |
+| Review host executes application or reaches network | Claude skill forbids builds, package managers, services, endpoints, WebFetch/WebSearch, and target-provided tools. Codex lanes use an explicit workspace-only filesystem profile with network disabled; the fixed prompt forbids running target code. |
 | Broad persistent permissions | No generated/committed target settings; trial uses Claude manual permission mode. |
 | Claude local history or memory retains source | Launcher disables auto-memory, all CLAUDE.md loading, prompt history, and print-mode session persistence. |
 | Partial or malformed lane output | Deterministic JSONL validation, fingerprints, merge, court references, and fail-closed finalization. |
 
 ## Residual Risks
 
-- Claude runs under the user's operating-system identity; filesystem policy is
-  ultimately enforced by Claude Code permissions and the host OS.
+- The selected host runs under the user's operating-system identity;
+  filesystem policy is ultimately enforced by its CLI sandbox/permissions and
+  the host OS.
 - Local incognito controls do not change provider-side retention policies,
   terminal scrollback, shell history, or the intentional external results sink.
 - A malicious repository can contain instruction-shaped source text. Reader
   agents are directed to treat repository content as data, but model behavior
   is not a security boundary.
+- Codex CLI inspection is shell-backed. Its permission profile prevents reads
+  outside the prepared workspace and disables command network, but does not
+  provide a per-command executable allowlist. The ban on running target code,
+  builds, tests, package managers, and interpreters is therefore a model
+  instruction rather than a mechanical boundary. Operators needing a
+  no-shell reviewer should use the default Claude path.
 - The planter is model-driven and receives the lens contracts and severity
   rubric as method documents (they contain no scoring information, so
   reviewer blindness is unaffected). Mechanical validation proves shape,

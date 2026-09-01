@@ -3,6 +3,7 @@ import unittest
 from lucy.runtime.loop_policy import (
     DispatchPermission,
     MAX_WIDTH,
+    RAMP_STEP,
     SOFT_START_WIDTH,
     lane_is_dead,
     limiter_width,
@@ -12,16 +13,20 @@ from lucy.runtime.loop_policy import (
 
 
 class LoopPolicyTests(unittest.TestCase):
-    def test_soft_start_ramps_by_four_to_twenty(self) -> None:
+    def test_soft_start_ramps_to_platform_cap(self) -> None:
         width = SOFT_START_WIDTH
-        self.assertEqual(10, ramp_width(width))
-        self.assertEqual(18, ramp_width(width, clean_intervals=3))
-        self.assertEqual(MAX_WIDTH, ramp_width(width, clean_intervals=4))
+        self.assertEqual(min(MAX_WIDTH, width + RAMP_STEP), ramp_width(width))
+        self.assertEqual(
+            min(MAX_WIDTH, width + 3 * RAMP_STEP),
+            ramp_width(width, clean_intervals=3),
+        )
+        intervals_to_cap = (MAX_WIDTH + RAMP_STEP - 1) // RAMP_STEP
+        self.assertEqual(MAX_WIDTH, ramp_width(width, clean_intervals=intervals_to_cap))
 
     def test_limiter_wave_halves_then_ramp_resumes(self) -> None:
         reduced = limiter_width(20)
         self.assertEqual(10, reduced)
-        self.assertEqual(14, ramp_width(reduced))
+        self.assertEqual(min(MAX_WIDTH, reduced + RAMP_STEP), ramp_width(reduced))
 
     def test_lane_dies_after_two_stalled_sweeps(self) -> None:
         self.assertFalse(lane_is_dead(1))

@@ -19,6 +19,9 @@ from lucy.runtime.results import LocalResultsSink
 SEVERITIES = {"PRIORITIZED_CRITICAL", "CRITICAL", "HIGH", "MEDIUM", "LOW"}
 SERIOUS = {"PRIORITIZED_CRITICAL", "CRITICAL", "HIGH"}
 _PASS_RE = re.compile(r"lane-pass(\d+)-")
+_PASS_LANE_RE = re.compile(
+    r"lane-pass(\d+)-(L[1-4]-[A-Za-z0-9_-]+)(?:-(UNIT-\d+))?\.jsonl$"
+)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -190,51 +193,124 @@ def merge_candidates(run_directory: Path, workspace: Path, results_root: Path) -
     # true (creator-review finding: sweeps must re-open a unit exactly as a
     # confirmation-lane finding does).
     passes: dict[int, set[str]] = {}
+    pass_severity: dict[int, dict[str, str]] = {}
     sweep_ids: set[str] = set()
+    sweep_severity: dict[str, str] = {}
+    unit_listings = [
+        listing
+        for listing in sorted(staging.glob("UNIT-*.txt"))
+        if not listing.name.endswith(("-BATTERY.txt", "-PRIORS.txt"))
+    ]
+    unit_files = {
+        listing.stem: {
+            line
+            for line in listing.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        for listing in unit_listings
+    }
+    pass_unit_lenses: dict[int, dict[str, set[str]]] = {}
+
+    def remember_severity(store: dict[str, str], candidate_id: str, severity: str) -> None:
+        previous = store.get(candidate_id)
+        if previous is None or _severity_rank(severity) > _severity_rank(previous):
+            store[candidate_id] = severity
+
     for path in files:
         if path.name.startswith("lane-sweep-"):
             for raw in read_jsonl(path):
                 try:
-                    raw_id = normalize_candidate(raw)["id"]
+                    normalized = normalize_candidate(raw)
                 except ValueError:
                     continue
+                raw_id = normalized["id"]
+                candidate_id = fold_map.get(raw_id, raw_id)
                 sweep_ids.add(fold_map.get(raw_id, raw_id))
+                remember_severity(sweep_severity, candidate_id, normalized["severity"])
             continue
         match = _PASS_RE.match(path.name)
         if not match:
             continue
         number = int(match.group(1))
         ids = passes.setdefault(number, set())
+        severity_by_id = pass_severity.setdefault(number, {})
+        lane_match = _PASS_LANE_RE.fullmatch(path.name)
+        if lane_match:
+            lens = lane_match.group(2)
+            unit_id = lane_match.group(3)
+            if unit_id is None and len(unit_files) == 1:
+                unit_id = next(iter(unit_files))
+            if unit_id in unit_files:
+                pass_unit_lenses.setdefault(number, {}).setdefault(unit_id, set()).add(lens)
+        elif path.name.endswith("-restored.jsonl"):
+            # Recapture restores one aggregate file per historical pass. Those
+            # source passes were full-width; retain that fact so rebuilding
+            # staging cannot erase convergence state.
+            for unit_id in unit_files:
+                pass_unit_lenses.setdefault(number, {}).setdefault(unit_id, set()).update(
+                    {"restored-1", "restored-2", "restored-3", "restored-4"}
+                )
         for raw in read_jsonl(path):
             try:
-                raw_id = normalize_candidate(raw)["id"]
+                normalized = normalize_candidate(raw)
             except ValueError:
                 continue
-            ids.add(fold_map.get(raw_id, raw_id))
-    serious_ids = {row["id"] for row in candidates if row["severity"] in SERIOUS}
+            raw_id = normalized["id"]
+            candidate_id = fold_map.get(raw_id, raw_id)
+            ids.add(candidate_id)
+            remember_severity(severity_by_id, candidate_id, normalized["severity"])
     seen: set[str] = set()
+    highest_seen: dict[str, str] = {}
     history = []
 
-    def append_entry(number: int, observed: set[str], phase: str | None = None) -> None:
-        nonlocal seen
+    def append_entry(
+        number: int,
+        observed: set[str],
+        severity_by_id: dict[str, str],
+        phase: str | None = None,
+    ) -> None:
+        nonlocal seen, highest_seen
+        new_serious = []
+        for candidate_id in observed:
+            previous = highest_seen.get(candidate_id, "")
+            current = severity_by_id.get(candidate_id, "")
+            if _severity_rank(previous) < _severity_rank("HIGH") <= _severity_rank(current):
+                new_serious.append(candidate_id)
         entry = {
             "pass": number,
             "observed": sorted(observed),
             "new": sorted(observed - seen),
-            "new_serious": sorted((observed - seen) & serious_ids),
+            "new_serious": sorted(new_serious),
         }
         if phase:
             entry["phase"] = phase
+        if phase != "sweep":
+            lenses_by_unit = pass_unit_lenses.get(number, {})
+            if lenses_by_unit:
+                entry["unit_lenses"] = {
+                    unit_id: sorted(lenses)
+                    for unit_id, lenses in sorted(lenses_by_unit.items())
+                }
+                entry["unit_modes"] = {
+                    unit_id: (
+                        "confirm" if len(lenses) == 1 else "full" if len(lenses) >= 4 else "partial"
+                    )
+                    for unit_id, lenses in sorted(lenses_by_unit.items())
+                }
         history.append(entry)
         seen |= observed
+        for candidate_id, severity in severity_by_id.items():
+            previous = highest_seen.get(candidate_id)
+            if previous is None or _severity_rank(severity) > _severity_rank(previous):
+                highest_seen[candidate_id] = severity
 
     ordered = sorted(passes)
     if not ordered and sweep_ids:
-        append_entry(1, sweep_ids, phase="sweep")
+        append_entry(1, sweep_ids, sweep_severity, phase="sweep")
     for number in ordered:
-        append_entry(number, passes[number])
+        append_entry(number, passes[number], pass_severity.get(number, {}))
         if number == ordered[0] and sweep_ids:
-            append_entry(number, sweep_ids, phase="sweep")
+            append_entry(number, sweep_ids, sweep_severity, phase="sweep")
     sink.write_json(
         str((run_directory / "receipts" / "PASS_HISTORY.json").relative_to(sink.root)),
         {"schema": "lucy-pass-history/v1", "passes": history},
@@ -534,10 +610,16 @@ def _enforce_run_pin(run_dir: Path) -> None:
         )
 
 
-def unit_quiet_map(run_directory: Path) -> dict[str, bool]:
-    """THE quiet arithmetic — one implementation for orchestration (via
-    lucy-merge output), recapture, and display. Divergent recomputations can
-    launch a pass that certification has already judged unnecessary."""
+def unit_convergence_map(run_directory: Path) -> dict[str, str]:
+    """Return ``loud``, ``confirm``, or ``quiet`` for every reader unit.
+
+    This is THE convergence reducer. A full pass at or below the density bar
+    earns a light confirmation; one fresh confirmation lane must then add zero
+    new serious candidates. For compatibility with receipts produced before
+    light confirmations existed, a second bounded full pass also closes the
+    unit. Sweep discoveries are added to pass one's yield and can reopen it,
+    but a sweep can never serve as the confirming read.
+    """
     from lucy.runtime.loop_policy import quiet_threshold
 
     receipts = run_directory / "receipts"
@@ -567,16 +649,55 @@ def unit_quiet_map(run_directory: Path) -> dict[str, bool]:
             unit.get("id"): int(unit.get("loc", 0) or 0)
             for unit in json.loads(units_meta.read_text(encoding="utf-8")).get("units", [])
         }
-    quiet: dict[str, bool] = {}
+    convergence: dict[str, str] = {}
     for listing in _unit_listings_in(unit_dir):
         files = {line for line in listing.read_text(encoding="utf-8").splitlines() if line.strip()}
         bar = quiet_threshold(unit_loc.get(listing.stem, 0))
-        counts = [
-            sum(1 for cid in entry.get("new_serious", []) if row_by_id.get(cid, {}).get("path") in files)
-            for entry in passes
-        ]
-        quiet[listing.stem] = len(counts) >= 2 and all(count <= bar for count in counts[-2:])
-    return quiet
+        cycles: list[dict[str, Any]] = []
+        for entry in passes:
+            count = sum(
+                1
+                for candidate_id in entry.get("new_serious", [])
+                if row_by_id.get(candidate_id, {}).get("path") in files
+            )
+            if entry.get("phase") == "sweep":
+                if cycles:
+                    cycles[-1]["count"] += count
+                continue
+            modes = entry.get("unit_modes") or {}
+            mode = modes.get(listing.stem)
+            if mode is None:
+                # Legacy histories predate per-unit lane-mode receipts. A
+                # numbered pass was full-width under that contract.
+                mode = "full"
+            if mode != "partial":
+                cycles.append({"mode": mode, "count": count})
+
+        state = "loud"
+        for cycle in cycles:
+            mode, count = cycle["mode"], int(cycle["count"])
+            if mode == "confirm":
+                state = "quiet" if state == "confirm" and count == 0 else "loud"
+                continue
+            if count > bar:
+                state = "loud"
+            elif state == "quiet":
+                state = "quiet"
+            elif state == "confirm":
+                # Legacy second full-width bounded pass.
+                state = "quiet"
+            else:
+                state = "confirm"
+        convergence[listing.stem] = state
+    return convergence
+
+
+def unit_quiet_map(run_directory: Path) -> dict[str, bool]:
+    """Boolean view of :func:`unit_convergence_map` for gates and display."""
+    return {
+        unit_id: state == "quiet"
+        for unit_id, state in unit_convergence_map(run_directory).items()
+    }
 
 
 def main() -> int:

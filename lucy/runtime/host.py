@@ -13,6 +13,14 @@ OpenAI-compatible endpoint (api.openai.com, Azure, local gateways) via:
 Budget is enforced HERE (summed usage x unit price), because API hosts have
 no --max-budget flag; exceeding it raises BudgetExceeded and the run ends
 honestly.
+
+The Codex host uses ``codex exec`` and the user's saved Codex login. It does
+not require an API key. Every invocation is ephemeral and receives a custom
+least-privilege permission profile: common runtime files plus the prepared
+workspace only, no command network, and no access to the launcher's separate
+answer-key custody. Do not replace that profile with the broader legacy
+``--sandbox read-only`` mode; read-only prevents writes but is not a
+workspace-only read boundary.
 """
 
 from __future__ import annotations
@@ -20,8 +28,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import threading
 import time
-from typing import Any, Protocol
+from datetime import datetime, timezone
+from typing import Any, Callable, Protocol
 import urllib.error
 import urllib.request
 
@@ -124,6 +136,291 @@ class ClaudeAgentHost:
                 f"{result.stderr.strip()[:300] or result.stdout.strip()[:300]}"
             )
         return result.stdout
+
+
+class CodexAgentHost:
+    """One fresh, ephemeral ``codex exec`` process per lane.
+
+    The CLI reuses the user's saved Codex authentication. User/project
+    configuration and optional tool surfaces are disabled so a scanned
+    repository cannot widen the lane. A Codex permission profile enforces
+    workspace-only reads (or writes for the isolated planter); failure to
+    parse or apply the profile is a lane failure, never a silent fallback.
+    """
+
+    DEFAULT_MODEL = "gpt-5.6-sol"
+    DEFAULT_REASONING_EFFORT = "high"
+    PROFILE_NAME = "lucy_lane"
+    REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+    def __init__(
+        self,
+        *,
+        codex_binary: str = "codex",
+        model: str = DEFAULT_MODEL,
+        reasoning_effort: str = DEFAULT_REASONING_EFFORT,
+        timeout_seconds: int = 3600,
+        metrics_path: Path | None = None,
+        runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    ) -> None:
+        if not model.strip():
+            raise ValueError("Codex model must not be empty")
+        if reasoning_effort not in self.REASONING_EFFORTS:
+            raise ValueError("unsupported Codex reasoning effort")
+        if timeout_seconds < 1:
+            raise ValueError("Codex timeout must be positive")
+        self.codex_binary = codex_binary
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.timeout_seconds = timeout_seconds
+        self.metrics_path = metrics_path
+        self._runner = runner or subprocess.run
+        self._metrics_lock = threading.Lock()
+
+    @staticmethod
+    def _environment() -> dict[str, str]:
+        """Keep saved CLI auth available but never pass API keys to lanes."""
+        environment = dict(os.environ)
+        for name in ("OPENAI_API_KEY", "CODEX_API_KEY"):
+            environment.pop(name, None)
+        return environment
+
+    def _permission_profile(self, *, workspace: Path, allow_edit: bool) -> str:
+        workspace_access = "write" if allow_edit else "read"
+        workspace_key = json.dumps(str(workspace.resolve()))
+        runtime_rules = ['\":minimal\"=\"read\"']
+        executable = shutil.which(self.codex_binary)
+        if executable is not None:
+            # Codex may re-exec its own binary while applying a patch. Permit
+            # only the PATH entry and resolved executable, never their parent
+            # package or home trees.
+            executable_path = Path(executable).absolute()
+            for path in sorted({executable_path, executable_path.resolve()}, key=str):
+                runtime_rules.append(f"{json.dumps(str(path))}=\"read\"")
+        filesystem_rules = ",".join(runtime_rules)
+        # Register the disposable directory explicitly. ``--cd`` sets cwd,
+        # but the permission profile itself remains the capability boundary.
+        return (
+            f"permissions.{self.PROFILE_NAME}="
+            f"{{workspace_roots={{{workspace_key}=true}},"
+            f"filesystem={{{filesystem_rules},"
+            f"\":workspace_roots\"={{\".\"=\"{workspace_access}\"}}}},"
+            "network={enabled=false}}"
+        )
+
+    def _command(
+        self,
+        *,
+        system: str,
+        task: str,
+        workspace: Path,
+        allow_edit: bool,
+    ) -> list[str]:
+        configurations = (
+            f'default_permissions="{self.PROFILE_NAME}"',
+            self._permission_profile(workspace=workspace, allow_edit=allow_edit),
+            f"developer_instructions={json.dumps(system)}",
+            f'model_reasoning_effort="{self.reasoning_effort}"',
+            'model_verbosity="low"',
+            'approval_policy="never"',
+            "agents.enabled=false",
+            "allow_login_shell=false",
+            'shell_environment_policy.inherit="core"',
+            "shell_environment_policy.ignore_default_excludes=false",
+            "project_doc_max_bytes=0",
+            "features.apps=false",
+            "features.plugins=false",
+            "features.browser_use=false",
+            "features.computer_use=false",
+            "tools.web_search=false",
+        )
+        command = [
+            self.codex_binary,
+            "exec",
+            "--strict-config",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--json",
+            "--color",
+            "never",
+            "--model",
+            self.model,
+            "--cd",
+            str(workspace),
+        ]
+        for configuration in configurations:
+            command.extend(["--config", configuration])
+        command.append(task)
+        return command
+
+    @staticmethod
+    def _lane_kind(task: str, *, allow_edit: bool) -> str:
+        if allow_edit:
+            return "planter"
+        first = task.lstrip().splitlines()[0] if task.strip() else ""
+        if first.startswith("LUCY READER"):
+            return "reader"
+        if first.startswith("LUCY SWEEP"):
+            return "sweep"
+        if first.startswith("LUCY COURT"):
+            return "court"
+        return "agent"
+
+    @staticmethod
+    def _parse_events(stdout: str) -> tuple[str, dict[str, int]]:
+        final_text: str | None = None
+        usage = {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+        }
+        for line_number, line in enumerate(stdout.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise LaneError(
+                    f"codex emitted invalid JSONL at line {line_number}"
+                ) from error
+            if event.get("type") == "item.completed":
+                item = event.get("item") or {}
+                if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                    final_text = item["text"]
+            if event.get("type") == "turn.completed":
+                event_usage = event.get("usage") or {}
+                for key in usage:
+                    usage[key] += int(event_usage.get(key, 0) or 0)
+        if final_text is None:
+            raise LaneError("codex lane returned no final agent message")
+        return final_text, usage
+
+    def _record_metrics(self, record: dict[str, Any]) -> None:
+        if self.metrics_path is None:
+            return
+        payload = json.dumps(record, sort_keys=True) + "\n"
+        with self._metrics_lock:
+            self.metrics_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            descriptor = os.open(
+                self.metrics_path,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o600,
+            )
+            with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+                handle.write(payload)
+
+    def run_agent(
+        self,
+        *,
+        system: str,
+        task: str,
+        workspace: Path,
+        allow_edit: bool = False,
+        max_turns: int = 60,
+    ) -> str:
+        # codex exec owns its internal tool loop. max_turns has no faithful
+        # CLI mapping; the hard wall-clock timeout is the fail-closed bound.
+        del max_turns
+        started_wall = datetime.now(timezone.utc)
+        started_mono = time.monotonic()
+        kind = self._lane_kind(task, allow_edit=allow_edit)
+        command = self._command(
+            system=system,
+            task=task,
+            workspace=workspace.resolve(),
+            allow_edit=allow_edit,
+        )
+        record: dict[str, Any] = {
+            "schema": "lucy-codex-invocation/v1",
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "kind": kind,
+            "workspace_access": "write" if allow_edit else "read",
+            "started_at": started_wall.isoformat(),
+        }
+        try:
+            result = self._runner(
+                command,
+                cwd=workspace,
+                env=self._environment(),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self.timeout_seconds,
+            )
+            if result.returncode != 0:
+                record.update({"status": "error", "exit_code": result.returncode})
+                detail = (result.stderr or result.stdout or "no diagnostic").strip()
+                raise LaneError(
+                    f"codex lane exited {result.returncode}: {detail[:300]}"
+                )
+            final_text, usage = self._parse_events(result.stdout)
+            record.update({"status": "ok", "exit_code": 0, **usage})
+            return final_text
+        except subprocess.TimeoutExpired as error:
+            record.update({"status": "timeout", "exit_code": None})
+            raise LaneError(
+                f"codex lane exceeded {self.timeout_seconds} seconds"
+            ) from error
+        except LaneError:
+            record.setdefault("status", "error")
+            record.setdefault("exit_code", None)
+            raise
+        except OSError as error:
+            record.update({"status": "error", "exit_code": None})
+            raise LaneError(f"could not start codex lane: {error}") from error
+        finally:
+            completed = datetime.now(timezone.utc)
+            record["completed_at"] = completed.isoformat()
+            record["duration_seconds"] = round(time.monotonic() - started_mono, 3)
+            self._record_metrics(record)
+
+
+def summarize_codex_usage(metrics_path: Path) -> dict[str, Any]:
+    """Summarize launcher-recorded Codex JSONL without inventing cost."""
+    rows: list[dict[str, Any]] = []
+    if metrics_path.is_file():
+        for line in metrics_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(json.loads(line))
+    successful = [row for row in rows if row.get("status") == "ok"]
+    totals = {
+        key: sum(int(row.get(key, 0) or 0) for row in successful)
+        for key in (
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+        )
+    }
+    starts = [str(row["started_at"]) for row in rows if row.get("started_at")]
+    completions = [str(row["completed_at"]) for row in rows if row.get("completed_at")]
+    wall_seconds = 0.0
+    if starts and completions:
+        first = datetime.fromisoformat(min(starts))
+        last = datetime.fromisoformat(max(completions))
+        wall_seconds = round((last - first).total_seconds(), 3)
+    return {
+        "schema": "lucy-codex-usage/v1",
+        "models": sorted({str(row.get("model")) for row in rows if row.get("model")}),
+        "calls": len(rows),
+        "successful_calls": len(successful),
+        "failed_calls": len(rows) - len(successful),
+        "wall_seconds": wall_seconds,
+        **totals,
+        "cost": {
+            "unit": "tokens",
+            "dollar_amount": None,
+            "note": (
+                "codex exec with saved ChatGPT authentication does not expose "
+                "an authoritative per-run dollar charge; apply the current plan "
+                "credit/rate card to these token totals"
+            ),
+        },
+    }
 
 
 class OpenAIHost:

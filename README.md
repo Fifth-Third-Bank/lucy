@@ -1,9 +1,9 @@
 # LUCY
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
-![python](https://img.shields.io/badge/python-%E2%89%A5%203.10-blue)
-![version](https://img.shields.io/badge/version-1.0.0-blue)
-![host](https://img.shields.io/badge/host-Claude%20Code%20%E2%89%A5%202.1.245-orange)
+![python](https://img.shields.io/badge/python-%E2%89%A5%203.11-blue)
+![version](https://img.shields.io/badge/version-1.1.0-blue)
+![host](https://img.shields.io/badge/hosts-Claude%20Code%20%7C%20Codex%20CLI-orange)
 ![output](https://img.shields.io/badge/output-gated%20JSON%20%2B%20SARIF%202.1.0-green)
 
 **LUCY is an agentic source-code vulnerability scanning harness for large,
@@ -56,10 +56,10 @@ lucy scan --target <super-repo> --results <dir>
 3. **Plant** - a separate, isolated "planter" hides 8 synthetic bugs in the
    copy; the answer key goes to launcher-only custody - the reviewer can't
    see it
-4. **Read** - a fresh Claude reviewer session splits the code into units and
-   reads each one through [four lenses](docs/lenses.md) (auth / secrets /
-   injection / infra), up to 20 readers at a time, repeating until passes
-   stop finding new problems
+4. **Read** - the selected host splits the code into units and reads each one
+   through [four lenses](docs/lenses.md) (auth / secrets / injection / infra),
+   up to 20 readers at a time, repeating until passes stop finding new
+   problems
 5. **Challenge** - independent [court agents](docs/certification.md#courts-adversarial-verification)
    try to DISPROVE every serious finding
 6. **Check and seal** - the launcher checks the 8 hidden bugs were found,
@@ -82,13 +82,25 @@ Deep dives: [building a super-repo](docs/super-repo.md) ·
 
 ## Requirements
 
-- **Claude Code 2.1.245+** installed and logged in (`claude` on PATH,
-  authenticated directly with Claude - no Bedrock/Vertex routing). LUCY
-  leans on Claude Code specifics: `/loop`-style autonomy for multi-hour
-  runs, background subagents for isolated readers and courts
-  (up to 20 concurrent subagents at a time), and Scheduled wakeups to keep
-  long phases alive.
-- **Python 3.10+**, Git
+- **One review host installed and logged in:**
+  - **Claude Code 2.1.245+** (`claude` on PATH, authenticated directly with
+    Claude - no Bedrock/Vertex routing). This is the default. Its established
+    path uses `/loop`-style autonomy, up to 20 concurrent subagents for
+    readers and courts, and Scheduled wakeups.
+  - **Codex CLI** (`codex` on PATH, signed in with ChatGPT). Select it with
+    `--host codex`. It uses non-interactive, ephemeral `codex exec` lanes and
+    does not require Claude Code or an OpenAI API key.
+  LUCY checks only the selected host before it copies or plants anything.
+- **Python 3.11+**, Git
+- **`tree-sitter-language-pack`**, installed with LUCY below. LUCY retains a
+  delimiter-based fallback for file types without a grammar, but supported
+  languages use tree-sitter to prevent planted mutations from introducing new
+  parse errors.
+- **Recommended for Codex:** [ripgrep](https://github.com/BurntSushi/ripgrep)
+  (`rg` on PATH). LUCY does not require or invoke `rg` directly, but Codex can
+  use it for faster repository navigation. Claude operation does not require it.
+- **Codex on Linux/WSL2:** `bubblewrap` (`bwrap` on PATH), required by the
+  Codex command sandbox. Claude-only operation does not require it.
 - **macOS or Linux** (on Windows, run inside WSL2). The launcher's pinned
   command wrappers and the answer-key custody permissions rely on a POSIX
   environment; repositories with Windows line endings are fully supported
@@ -98,10 +110,52 @@ Deep dives: [building a super-repo](docs/super-repo.md) ·
 
 ```bash
 git clone <this-repo> && cd lucy
+python3 -m pip install .                # LUCY + required Python dependencies
 ./install.sh                            # skill, agents, and lucy CLI (~/.local/bin)
-pip install tree-sitter-language-pack   # multi-language syntax validation
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+Use the same `python3` environment for installation and operation. If your
+system Python does not permit package installation, create and activate a
+virtual environment first. `install.sh` validates Python, Git, tree-sitter, and
+the presence of at least one review host before writing anything. On Linux it
+also requires `bwrap` when Codex is the only installed host; when Claude is
+also available, installation can proceed but Codex runs remain blocked until
+`bwrap` is installed. A missing `rg` produces only a Codex-performance warning.
+
+On Debian/Ubuntu, the minimal Python installation does not include virtual
+environment support. Install it before creating the environment:
+
+```bash
+sudo apt-get install python3-venv
+python3 -m venv .venv
+. .venv/bin/activate
+```
+
+For Codex on Debian/Ubuntu or WSL2, install its Linux sandbox prerequisite:
+
+```bash
+sudo apt-get install bubblewrap
+```
+
+Optional ripgrep installation:
+
+```bash
+brew install ripgrep                    # macOS
+sudo apt-get install ripgrep            # Debian/Ubuntu
+```
+
+To test a checkout without installing it, invoke its launcher wrapper by
+path:
+
+```bash
+/path/to/lucy/lucy/bin/lucy scan --target ~/code/estate --results ~/lucy-results --estimate-only
+```
+
+The wrapper pins imports to that checkout and removes the current directory
+from Python's module search path. Do not substitute `python -m` while another
+Lucy checkout is the current directory: Python searches that directory first
+and can silently run the wrong build.
 
 ## Quick start
 
@@ -118,6 +172,18 @@ Then scan:
 lucy scan --target ~/code/example-super-repo \
   --results ~/lucy-results --print
 ```
+
+That command defaults to Claude. `--host claude` is also accepted. A
+Codex-only operator runs:
+
+```bash
+lucy scan --host codex \
+  --target ~/code/payments-super-repo \
+  --results ~/lucy-results --print
+```
+
+The canary planter follows the selected host by default. Use `--planter`
+only when you intentionally want a different installed host.
 
 The last line printed is the verdict: `REVIEW-COMPLETE <run-id> <token>
 CERTIFIED` or `... PROCESS-COMPLETE`. Full walkthrough below.
@@ -285,9 +351,9 @@ For the trust architecture see [docs/threat-model.md](docs/threat-model.md).
 
 ## FAQ
 
-**Where does my code go?** To the Claude API through your own Claude Code
-account, and nowhere else. Results stay on your machine in the directory
-you chose.
+**Where does my code go?** To the provider selected by `--host`, through
+your own Claude Code or Codex CLI login, and nowhere else. Results stay on
+your machine in the directory you chose.
 
 **What languages does it support?** The readers are language-agnostic -
 they read whatever text is in the repo, including Terraform, Kubernetes,
@@ -295,18 +361,20 @@ pipeline definitions, and extensionless scripts identified by a shebang.
 The synthetic-bug planting validates syntax
 across ~20 common languages and falls back safely elsewhere.
 
-**What does it cost?** Run `--estimate-only` and get a workload-specific
-range before anything spends. Cost and duration vary with the size and
-shape of the application.
+**What does it cost?** Run `--estimate-only` before anything spends. The
+Claude estimate includes a dollar range. Saved-login Codex usage is plan- or
+credit-based: LUCY receipts tokens and timing after the run, but the Codex
+CLI does not expose an authoritative per-run dollar charge. Cost and duration
+vary with the size and shape of the application.
 
 **What if it doesn't certify?** You still get the full report. The run ends
 PROCESS-COMPLETE with the failing check named, and `resume` or `recapture`
 picks up from where it fell short - completed work is never re-paid.
 
-**Why only Claude Code?** The review method depends on Claude Code's
-orchestration (parallel subagents, long-run autonomy). An
-OpenAI-compatible host exists but is [experimental](#experimental-openai-compatible-host)
-until it passes the same evaluation the Claude host has.
+**Do I need both Claude and Codex?** No. Claude remains the default and keeps
+its established orchestration path. Codex uses launcher-owned scheduling for
+the same units, lenses, courts, convergence receipts, recall scoring, and
+certification gates. LUCY preflights only the host you select.
 
 ## Security posture (summary)
 
@@ -320,6 +388,9 @@ until it passes the same evaluation the Claude host has.
 - The reviewer's tool surface is pinned: read-only git, read-only search,
   and the bundled `lucy-*` wrappers. No open-ended shell, no network tools,
   no executables from the scanned repo (enforced by tests).
+- Codex needs its normal shell-backed read/search tools; those lanes are
+  confined to the disposable workspace with network disabled, while the
+  fixed prompt forbids executing target code.
 - Bug planting is custodial: a separate no-history process plants,
   mechanical checks accept or reject, and the reviewer sees only a hash
   commitment - never the answer key.
@@ -353,14 +424,16 @@ publicly (your scan findings, receipts, secrets).
 [Apache-2.0](LICENSE). Use of this software is subject to the expectations in
 our [Responsible Use Policy](ACCEPTABLE_USE.md).
 
-## Experimental: OpenAI-compatible host
+## Codex CLI host
 
-`lucy scan --host openai` runs the review with launcher-owned orchestration
-over any OpenAI-compatible Chat Completions endpoint (set `OPENAI_API_KEY`,
-`OPENAI_MODEL`, optionally `OPENAI_BASE_URL`, and
-`LUCY_OPENAI_USD_PER_MTOKEN` for budget enforcement). Readers, courts, and
-the planter become API tool loops with workspace-bound file tools - no
-shell at all. This path is EXPERIMENTAL: it passes the fixture pipeline
-with a scripted host, but no compatibility is claimed for any OpenAI model
-until it reproduces the full evaluation corpus for recall, court quality,
-and end-to-end execution that the Claude host has passed.
+`lucy scan --host codex` uses the locally installed Codex CLI and its saved
+ChatGPT login. New Codex runs default to `gpt-5.6-sol` with `high` reasoning;
+override them with `--codex-model` and `--codex-reasoning`. Resume,
+recapture, and adjudication reuse the host, model, reasoning level, and lane
+width recorded at launch unless explicitly overridden.
+
+Each invocation is ephemeral, ignores repository Codex instructions and
+project configuration, has no network permission, and receives only the
+prepared workspace. Reader and court lanes are read-only; only the isolated
+planter receives workspace write permission. Codex timing and token totals
+are written to the run receipts. No OpenAI API key is required.

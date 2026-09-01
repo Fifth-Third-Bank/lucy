@@ -152,15 +152,17 @@ class WrapperShadowingTests(unittest.TestCase):
             (hostile / "runtime" / "units.py").write_text(
                 f"open({str(marker)!r}, 'w').write('x')\n"
             )
-            result = subprocess.run(
-                [str(ROOT / "lucy" / "bin" / "lucy-units"), "--help"],
-                cwd=tmp,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            self.assertFalse(
-                marker.exists(),
-                "hostile lucy/ package in CWD was imported by the wrapper",
-            )
+            for wrapper in ("lucy-units", "lucy"):
+                result = subprocess.run(
+                    [str(ROOT / "lucy" / "bin" / wrapper), "--help"],
+                    cwd=tmp,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(
+                    marker.exists(),
+                    f"hostile lucy/ package in CWD was imported by {wrapper}",
+                )
             self.assertEqual(result.returncode, 0, result.stderr)

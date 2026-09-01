@@ -27,7 +27,17 @@ from typing import Any
 
 from lucy.runtime.artifacts import SERIOUS, finalize, merge_candidates, read_jsonl
 from lucy.runtime.host import AgentHost
-from lucy.runtime.orchestrator import LENSES, READER_SYSTEM, READER_TASK, _jsonl_only
+from lucy.runtime.orchestrator import (
+    LENSES,
+    READER_SYSTEM,
+    READER_TASK,
+    _atomic_text,
+    _jsonl_only,
+    court_needs_dispatch,
+    normalized_court_verdict,
+    scoped_jsonl,
+    write_scope_receipt,
+)
 from lucy.runtime.seal import _chapman_bound
 
 
@@ -147,6 +157,10 @@ def restore_courts(run_dir: Path) -> None:
     """
     court_dir = run_dir / "staging" / "courts"
     court_dir.mkdir(parents=True, exist_ok=True)
+    candidates_by_id = {
+        str(row.get("id", "")): row
+        for row in read_jsonl(run_dir / "candidates.jsonl")
+    }
     verdict_map = {"verified": "VERIFIED", "refuted": "REFUTED", "conditional-court": "CONDITIONAL"}
     for row in read_jsonl(run_dir / "findings.jsonl"):
         verdict = verdict_map.get(str(row.get("status", "")))
@@ -156,12 +170,21 @@ def restore_courts(run_dir: Path) -> None:
         # to traverse out of the courts directory.
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", str(row.get("id", ""))):
             raise ValueError(f"findings row carries an unsafe id: {row.get('id')!r}")
+        candidate = candidates_by_id.get(str(row["id"]))
+        if candidate is None:
+            raise ValueError(
+                f"finalized finding has no source candidate: {row['id']!r}"
+            )
         (court_dir / f"{row['id']}.json").write_text(
             json.dumps(
                 {
                     "candidate_id": row["id"],
                     "verdict": verdict,
                     "severity": row["severity"],
+                    # The court may have lowered the final severity. Preserve
+                    # what it actually judged so a later recapture upgrade of
+                    # this candidate is sent to a fresh court.
+                    "proposed_severity": candidate["severity"],
                     "cwe": row.get("cwe", "CWE-693"),
                     "disproof_attempt": row.get("disproof_attempt", ""),
                     "basis": row.get("verification_basis", "static-reasoned"),
@@ -233,19 +256,19 @@ def _court_one(host: AgentHost, workspace: Path, court_dir: Path, candidate: dic
         task=COURT_TASK.format(**candidate),
         workspace=workspace,
     )
-    body = _jsonl_only(response).strip() or json.dumps(
-        {
-            "candidate_id": candidate["id"],
-            "verdict": "CONDITIONAL",
-            "severity": candidate["severity"],
-            "cwe": "CWE-693",
-            "disproof_attempt": "court returned no parseable verdict; retained at worst-plausible",
-            "basis": "static-reasoned",
-            "reach_basis": candidate["reach_basis"],
-            "fix": "Review the cited locus manually.",
-        }
+    docs = []
+    for line in _jsonl_only(response).splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            docs.append(row)
+    verdict = normalized_court_verdict(docs, candidate)
+    _atomic_text(
+        court_dir / f"{candidate['id']}.json",
+        json.dumps(verdict, sort_keys=True) + "\n",
     )
-    (court_dir / f"{candidate['id']}.json").write_text(body, encoding="utf-8")
 
 
 
@@ -507,8 +530,14 @@ def run_recapture(
             ),
             workspace=workspace,
         )
-        (staging / f"lane-pass{pass_number}-{lens}-{unit_id}.jsonl").write_text(
-            _jsonl_only(response), encoding="utf-8"
+        allowed_paths = {path for path in unit_files.splitlines() if path.strip()}
+        payload, rejected = scoped_jsonl(response, allowed_paths)
+        _atomic_text(
+            staging / f"lane-pass{pass_number}-{lens}-{unit_id}.jsonl",
+            payload,
+        )
+        write_scope_receipt(
+            run_dir, f"recap-pass{pass_number}-{lens}-{unit_id}", rejected
         )
 
     lap_count = 0
@@ -568,7 +597,9 @@ def run_recapture(
             row
             for row in candidates
             if row["severity"] in SERIOUS
-            and not (court_dir_check / f"{row['id']}.json").is_file()
+            and court_needs_dispatch(
+                row, court_dir_check / f"{row['id']}.json"
+            )
         ]
         newly_observed = [row for row in new_serious if row["id"] not in pre_candidates]
         new_bounds = unit_bounds(run_dir)
@@ -624,7 +655,9 @@ def run_recapture(
         row
         for row in candidates
         if row["severity"] in SERIOUS
-        and not (court_dir_final / f"{row['id']}.json").is_file()
+        and court_needs_dispatch(
+            row, court_dir_final / f"{row['id']}.json"
+        )
     ]
     if leftovers:
         with ThreadPoolExecutor(max_workers=width) as pool:

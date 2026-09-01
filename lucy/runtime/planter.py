@@ -1,4 +1,4 @@
-"""Launch and validate a separate ephemeral Claude canary planter."""
+"""Launch and validate a separate ephemeral canary planter."""
 
 from __future__ import annotations
 
@@ -155,11 +155,18 @@ def launch_claude_planter(
     return validate_answer_key(answer_key, workspace)
 
 
-def launch_host_planter(workspace: Path, skill_root: Path, host: Any) -> dict[str, Any]:
-    """Plant via an API host agent loop (edit-capable workspace tools only).
+def launch_host_planter(
+    workspace: Path,
+    skill_root: Path,
+    host: Any,
+    *,
+    retry_hint: str = "",
+) -> dict[str, Any]:
+    """Plant via a launcher-driven host (workspace edits only).
 
-    Same mechanical validation as the Claude planter; the host planter has no
-    shell, no network, and no paths outside the disposable workspace.
+    The host adapter owns the capability boundary. Codex grants write access
+    only to the disposable workspace and disables command network; the direct
+    API adapter exposes only workspace-bound local file tools.
     """
     system_prompt = (skill_root / "planter" / "SYSTEM.md").read_text(encoding="utf-8")
     response = host.run_agent(
@@ -174,6 +181,12 @@ def launch_host_planter(workspace: Path, skill_root: Path, host: Any) -> dict[st
             + forbidden_paths_clause()
             + " "
             + placement_clause()
+            + (
+                f" A previous planting attempt was rejected by the validator: {retry_hint} "
+                "— the workspace has been reset; plant fresh and do not repeat that mistake."
+                if retry_hint
+                else ""
+            )
         ),
         workspace=workspace,
         allow_edit=True,

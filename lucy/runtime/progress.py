@@ -230,69 +230,19 @@ class ProgressReporter:
         }
 
     def _quiet_units(self) -> tuple[int, int] | None:
-        """Per-unit quiet countdown from PASS_HISTORY (same arithmetic as the
-        certification gate's C2 check)."""
-        receipts = self.run_directory / "receipts"
-        history_path = receipts / "PASS_HISTORY.json"
-        candidates_path = self.run_directory / "candidates.jsonl"
-        # Unit listings live in staging during the run and move to receipts
-        # at finalize — check both.
-        listing_dirs = (self.run_directory / "staging", receipts)
-        listings = []
-        for directory in listing_dirs:
-            listings = [
-                listing
-                for listing in directory.glob("UNIT-*.txt")
-                if not listing.name.endswith(("-BATTERY.txt", "-PRIORS.txt"))
-            ]
-            if listings:
-                break
-        if not history_path.is_file() or not candidates_path.is_file() or not listings:
-            return None
+        """Per-unit countdown from the one production convergence reducer."""
         import json
 
+        if not (self.run_directory / "receipts" / "PASS_HISTORY.json").is_file():
+            return None
         try:
-            passes = json.loads(history_path.read_text(encoding="utf-8")).get("passes", [])
-            paths_by_id = {}
-            serious_ids = set()
-            for line in candidates_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                paths_by_id[row["id"]] = row["path"]
-                if row.get("severity") in {"PRIORITIZED_CRITICAL", "CRITICAL", "HIGH"}:
-                    serious_ids.add(row["id"])
-            quiet_count = 0
-            for listing in listings:
-                files = {
-                    text
-                    for text in listing.read_text(encoding="utf-8").splitlines()
-                    if text.strip()
-                }
-                counts = [
-                    sum(
-                        1
-                        for cid in entry.get("new_serious", [])
-                        if cid in serious_ids and paths_by_id.get(cid) in files
-                    )
-                    for entry in passes
-                ]
-                from lucy.runtime.loop_policy import quiet_threshold
+            from lucy.runtime.artifacts import unit_quiet_map
 
-                units_doc = {}
-                for meta_dir in listing_dirs:
-                    meta = meta_dir / "UNITS.json"
-                    if meta.is_file():
-                        units_doc = {
-                            unit.get("id"): int(unit.get("loc", 0) or 0)
-                            for unit in json.loads(meta.read_text(encoding="utf-8")).get("units", [])
-                        }
-                        break
-                bar = quiet_threshold(units_doc.get(listing.stem, 0))
-                if len(counts) >= 2 and all(count <= bar for count in counts[-2:]):
-                    quiet_count += 1
-            return quiet_count, len(listings)
-        except (OSError, json.JSONDecodeError, KeyError):
+            quiet = unit_quiet_map(self.run_directory)
+            if not quiet:
+                return None
+            return sum(quiet.values()), len(quiet)
+        except (OSError, ValueError, json.JSONDecodeError, KeyError):
             return None
 
     def _paint(self, text: str, code: str) -> str:

@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -137,6 +139,190 @@ class OrchestratorEndToEndTests(unittest.TestCase):
                 dispositions=valid_dispositions,
             )
             self.assertTrue(outcome["certified"], outcome)
+
+    def test_courts_share_the_cap_and_start_before_confirmation_reader(self) -> None:
+        class TrackingHost(FakeHost):
+            def __init__(self, answer_key):
+                super().__init__(answer_key)
+                self.active = 0
+                self.maximum = 0
+                self.sequence = []
+                self.lock = threading.Lock()
+
+            def run_agent(self, **kwargs):
+                first = kwargs["task"].splitlines()[0]
+                with self.lock:
+                    self.active += 1
+                    self.maximum = max(self.maximum, self.active)
+                    self.sequence.append(first)
+                try:
+                    time.sleep(0.005)
+                    return super().run_agent(**kwargs)
+                finally:
+                    with self.lock:
+                        self.active -= 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp) / "results"
+            trial = prepare_fixture_trial(
+                POLYGLOT, results, custody_root=Path(tmp) / "custody"
+            )
+            answer = json.loads(
+                (Path(trial["_custody"]).parent / "ANSWER_KEY.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            host = TrackingHost(answer)
+            with patch.dict("os.environ", {"LUCY_MAX_LANES": "2"}):
+                summary = run_review(
+                    host,
+                    Path(trial["workspace"]),
+                    Path(trial["run_directory"]),
+                    results,
+                )
+            self.assertEqual(summary["quiet_units"], summary["units"])
+            self.assertLessEqual(host.maximum, 2)
+            first_court = next(i for i, value in enumerate(host.sequence) if value == "LUCY COURT")
+            pass_two = next(
+                i for i, value in enumerate(host.sequence) if value.startswith("LUCY READER PASS=2")
+            )
+            self.assertLess(first_court, pass_two)
+            final_pass = f"LUCY READER PASS={summary['passes']}"
+            self.assertEqual(
+                summary["units"],
+                sum(value.startswith(final_pass) for value in host.sequence),
+            )
+
+    def test_interrupted_wave_resumes_without_redoing_completed_lanes(self) -> None:
+        class EmptyHost:
+            def __init__(self, fail_lens=None):
+                self.fail_lens = fail_lens
+                self.calls = []
+
+            def run_agent(self, *, system, task, workspace, allow_edit=False, max_turns=60):
+                self.calls.append(task.splitlines()[0])
+                if self.fail_lens and self.fail_lens in task:
+                    raise RuntimeError("simulated lane crash")
+                return ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (workspace / "app.py").write_text("print('ok')\n", encoding="utf-8")
+            results = root / "results"
+            run_dir = results / "runs" / "r-resume"
+            broken = EmptyHost("LENS=L4-infra")
+            with self.assertRaisesRegex(RuntimeError, "simulated lane crash"):
+                run_review(broken, workspace, run_dir, results, width=1)
+            self.assertTrue((run_dir / "staging" / "CURRENT_WAVE.json").is_file())
+            healthy = EmptyHost()
+            summary = run_review(healthy, workspace, run_dir, results, width=1)
+            self.assertEqual(summary["quiet_units"], summary["units"])
+            # Three pass-one lanes finished atomically before the crash; only
+            # the missing L4 lane plus one light confirmation are dispatched.
+            self.assertEqual(2, len(healthy.calls), healthy.calls)
+
+    def test_resumed_pass_one_backfills_multi_repo_sweeps(self) -> None:
+        class EmptyHost:
+            def __init__(self, fail_lens=None):
+                self.fail_lens = fail_lens
+                self.calls = []
+
+            def run_agent(self, *, system, task, workspace, allow_edit=False, max_turns=60):
+                self.calls.append(task.splitlines()[0])
+                if self.fail_lens and self.fail_lens in task:
+                    raise RuntimeError("simulated lane crash")
+                return ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            (workspace / "repo-a").mkdir(parents=True)
+            (workspace / "repo-b").mkdir(parents=True)
+            (workspace / "repo-a" / "a.py").write_text("print('a')\n", encoding="utf-8")
+            (workspace / "repo-b" / "b.py").write_text("print('b')\n", encoding="utf-8")
+            results = root / "results"
+            run_dir = results / "runs" / "r-sweep-resume"
+            with self.assertRaisesRegex(RuntimeError, "simulated lane crash"):
+                run_review(
+                    EmptyHost("LENS=L4-infra"), workspace, run_dir, results, width=1
+                )
+            healthy = EmptyHost()
+            summary = run_review(healthy, workspace, run_dir, results, width=1)
+            self.assertEqual(summary["quiet_units"], summary["units"])
+            self.assertEqual(
+                4,
+                sum(call.startswith("LUCY SWEEP") for call in healthy.calls),
+                healthy.calls,
+            )
+            self.assertFalse(
+                any(call.startswith("LUCY READER PASS=1 LENS=L1") for call in healthy.calls),
+                healthy.calls,
+            )
+
+
+class OrchestratorMechanicsTests(unittest.TestCase):
+    def test_severity_upgrade_invalidates_only_a_stale_court(self) -> None:
+        from lucy.runtime.orchestrator import court_needs_dispatch
+
+        candidate = {"id": "LUCY-1", "severity": "CRITICAL"}
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = Path(tmp) / "LUCY-1.json"
+            verdict.write_text(
+                json.dumps(
+                    {
+                        "candidate_id": "LUCY-1",
+                        "verdict": "VERIFIED",
+                        "severity": "MEDIUM",
+                        "proposed_severity": "HIGH",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(court_needs_dispatch(candidate, verdict))
+            candidate["severity"] = "HIGH"
+            self.assertFalse(court_needs_dispatch(candidate, verdict))
+
+    def test_invalid_court_contract_falls_back_once_without_refuting(self) -> None:
+        from lucy.runtime.orchestrator import normalized_court_verdict
+
+        candidate = {
+            "id": "LUCY-1",
+            "severity": "HIGH",
+            "reach_basis": "app.py:1",
+        }
+        verdict = normalized_court_verdict(
+            [
+                {
+                    "candidate_id": "LUCY-WRONG",
+                    "verdict": "REFUTED",
+                    "severity": "HIGH",
+                }
+            ],
+            candidate,
+        )
+        self.assertEqual("LUCY-1", verdict["candidate_id"])
+        self.assertEqual("CONDITIONAL", verdict["verdict"])
+        self.assertEqual("HIGH", verdict["severity"])
+
+    def test_resume_success_closes_an_orphaned_lane_death(self) -> None:
+        from lucy.runtime.orchestrator import _lane_guarded
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            receipts = run_dir / "receipts"
+            receipts.mkdir()
+            (receipts / "LIVENESS.jsonl").write_text(
+                json.dumps({"event": "lane-dead", "lane": "pass1-L1-auth-UNIT-001"}) + "\n",
+                encoding="utf-8",
+            )
+            _lane_guarded(run_dir, "pass1-L1-auth-UNIT-001", lambda: None)
+            rows = [
+                json.loads(line)
+                for line in (receipts / "LIVENESS.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual("lane-relaunched", rows[-1]["event"])
 
 
 class OpenAIHostConfigTests(unittest.TestCase):

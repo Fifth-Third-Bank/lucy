@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from lucy.runtime.planter import (
     FORBIDDEN_PATH_PARTS,
@@ -130,6 +131,62 @@ class PlanterValidationTests(unittest.TestCase):
         clause = forbidden_paths_clause()
         for part in sorted(FORBIDDEN_PATH_PARTS):
             self.assertIn(part, clause)
+
+    def test_codex_rejection_cleans_backup_and_retries(self) -> None:
+        """A Codex editing primitive may leave an untracked backup file.
+
+        The shared planting loop must reject it, reset tracked and untracked
+        bytes, pass the reason to a fresh invocation, and continue. This is a
+        launcher-mechanics test; no provider is installed or invoked.
+        """
+        from lucy.runtime.trial import _plant_with_retries
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.create_workspace(Path(directory))
+            source = workspace / "src" / "file0.py"
+            backup = workspace / "src" / "file0.py.orig"
+            attempts: list[str] = []
+            accepted = {"schema": "lucy-answer-key/v1", "canaries": []}
+
+            def fake_planter(
+                _workspace, _skill_root, _host, *, retry_hint=""
+            ):
+                attempts.append(retry_hint)
+                if len(attempts) == 1:
+                    source.write_text("secure = False\n")
+                    backup.write_text("secure = True\n")
+                    raise ValueError(
+                        "planter must only modify existing files: "
+                        "{'src/file0.py.orig': '??'}"
+                    )
+                self.assertEqual(source.read_text(), "secure = True\n")
+                self.assertFalse(backup.exists())
+                self.assertIn("only modify existing files", retry_hint)
+                return accepted
+
+            with (
+                patch("lucy.runtime.host.CodexAgentHost", return_value=object()),
+                patch(
+                    "lucy.runtime.planter.launch_host_planter",
+                    side_effect=fake_planter,
+                ),
+                patch("lucy.runtime.trial._validate_canary_coverage"),
+                patch("lucy.runtime.trial._replay_or_raise"),
+            ):
+                result = _plant_with_retries(
+                    "codex",
+                    workspace,
+                    claude_binary="claude",
+                    codex_binary="codex",
+                    codex_model="gpt-5.6-sol",
+                    codex_reasoning_effort="high",
+                    codex_metrics_path=None,
+                    planter_budget_usd=None,
+                    baseline_paths=set(),
+                )
+
+            self.assertIs(result, accepted)
+            self.assertEqual(len(attempts), 2)
 
 
 if __name__ == "__main__":
