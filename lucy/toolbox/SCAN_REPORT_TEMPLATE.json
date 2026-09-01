@@ -5,7 +5,7 @@
     "app_name": "<human app name>",
     "estate": "<repository slug e.g. example-service>",
     "scan_run": "<scanner run id e.g. lucy r-example>",
-    "scanner_version": "<producing scanner release e.g. 1.1.0>",
+    "scanner_version": "<producing scanner release e.g. 1.1.1>",
     "sealed_date": "<YYYY-MM-DD>"
   },
   "declared_counts": { "total": 0, "pc": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "chains": 0 },

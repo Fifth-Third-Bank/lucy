@@ -37,7 +37,15 @@ if [ "$(uname -s)" = "Linux" ] && [ "$HAS_CODEX" -eq 1 ] \
     "Install note: Codex CLI on Linux requires bubblewrap (bwrap); Claude can run now, but --host codex will remain blocked until it is installed." >&2
 fi
 python3 -c 'import tree_sitter_language_pack' >/dev/null 2>&1 || fail \
-  "tree-sitter-language-pack is required. From this checkout run: python3 -m pip install ."
+  "tree-sitter-language-pack is required. Use an isolated virtual environment:
+
+  python3 -m venv .venv
+  . .venv/bin/activate
+  python -m pip install .
+  ./install.sh
+
+Keep the virtual environment active when running LUCY, or run
+  .venv/bin/lucy directly."
 if ! command -v rg >/dev/null 2>&1; then
   printf '%s\n' \
     "Install note: rg (ripgrep) was not found. It is optional, but recommended for Codex repository navigation." >&2

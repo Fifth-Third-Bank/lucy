@@ -11,6 +11,13 @@ ROOT = Path(__file__).parents[1]
 
 
 class InstallTests(unittest.TestCase):
+    def test_missing_dependency_message_uses_virtual_environment(self) -> None:
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("python3 -m venv .venv", installer)
+        self.assertIn(". .venv/bin/activate", installer)
+        self.assertIn("python -m pip install .", installer)
+        self.assertNotIn("From this checkout run: python3 -m pip install .", installer)
+
     @staticmethod
     def _tool_path(home: Path, *, hosts: tuple[str, ...]) -> str:
         """Build a deterministic PATH independent of developer host installs."""

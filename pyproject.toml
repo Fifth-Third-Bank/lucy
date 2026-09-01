@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lucy-scanner"
-version = "1.1.0"
+version = "1.1.1"
 description = "LUCY: agentic verified source-code vulnerability review with adversarial verification and planted-recall measurement"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -19,6 +19,8 @@ from lucy.runtime.trial import (
     require_host_tools,
 )
 
+ROOT = Path(__file__).parents[1]
+
 
 def successful_events(message: str = '{"path":"a.py"}') -> str:
     return "\n".join(
@@ -46,6 +48,32 @@ def successful_events(message: str = '{"path":"a.py"}') -> str:
 
 
 class CodexHostTests(unittest.TestCase):
+    def test_estimate_output_renders_unicode_punctuation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            completed = subprocess.run(
+                [
+                    str(ROOT / "lucy" / "bin" / "lucy"),
+                    "scan",
+                    "--host",
+                    "codex",
+                    "--target",
+                    str(ROOT / "tests" / "fixtures" / "polyglot"),
+                    "--results",
+                    str(Path(directory) / "results"),
+                    "--estimate-only",
+                ],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotIn("\\u2014", completed.stdout)
+        self.assertIn("—", completed.stdout)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["cost_estimate"]["host"], "codex")
+
     def test_cli_defaults_to_claude_and_accepts_both_explicit_hosts(self) -> None:
         base = ["lucy", "scan", "--target", "/tmp/source", "--results", "/tmp/results"]
         with patch("sys.argv", base):

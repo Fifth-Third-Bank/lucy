@@ -11,6 +11,20 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+def require_jenkins_metadata(test_case: unittest.TestCase, root: Path) -> None:
+    """Run publishing-policy assertions only where their source exists.
+
+    Public release archives intentionally omit internal Jenkins configuration.
+    Public GitHub clones have Git metadata but still correctly lack these
+    internal files, so repository presence cannot distinguish the two forms.
+    """
+    if (root / ".jenkins").is_dir():
+        return
+    test_case.skipTest(
+        "source-only Jenkins publishing policy is absent from the public archive"
+    )
+
+
 class PublicMetadataTests(unittest.TestCase):
     def test_accepts_generic_lucy_zip_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -118,9 +132,6 @@ class ReleaseIdentityParityTests(unittest.TestCase):
         declared = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
         changelog = (self.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         readme = (self.ROOT / "README.md").read_text(encoding="utf-8")
-        release = (self.ROOT / ".jenkins" / "release-deploy.yaml").read_text(
-            encoding="utf-8"
-        )
         report_template = (
             self.ROOT / "lucy" / "toolbox" / "SCAN_REPORT_TEMPLATE.json"
         ).read_text(encoding="utf-8")
@@ -128,8 +139,18 @@ class ReleaseIdentityParityTests(unittest.TestCase):
         self.assertIn(f"## {declared} -", changelog)
         self.assertNotIn("## Unreleased", changelog)
         self.assertIn(f"version-{declared}-blue", readme)
-        self.assertIn(f'tagToCreate: "v{declared}"', release)
         self.assertIn(f"e.g. {declared}", report_template)
+
+    def test_release_deploy_tag_matches_version(self) -> None:
+        import re
+
+        require_jenkins_metadata(self, self.ROOT)
+        pyproject = (self.ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        declared = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
+        release = (self.ROOT / ".jenkins" / "release-deploy.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f'tagToCreate: "v{declared}"', release)
 
     def test_runtime_emits_no_internal_repo_brand(self) -> None:
         internal_label = "lucy" + "-oss"
@@ -217,6 +238,9 @@ class ReleaseIdentityParityTests(unittest.TestCase):
 class ReleaseArchivePolicyTests(unittest.TestCase):
     ROOT = Path(__file__).parents[1]
 
+    def setUp(self) -> None:
+        require_jenkins_metadata(self, self.ROOT)
+
     def test_build_archives_include_public_github_metadata_without_codeowners(self) -> None:
         for name in ("ci-build.yaml", "dev-build.yaml", "release-build.yaml"):
             config = (self.ROOT / ".jenkins" / name).read_text(encoding="utf-8")
@@ -244,6 +268,19 @@ class ReleaseArchivePolicyTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn("TODO(", config)
+
+
+class JenkinsMetadataBoundaryTests(unittest.TestCase):
+    def test_public_archive_without_jenkins_metadata_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(unittest.SkipTest):
+                require_jenkins_metadata(self, Path(directory))
+
+    def test_source_checkout_with_jenkins_metadata_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".jenkins").mkdir()
+            require_jenkins_metadata(self, root)
 
 
 if __name__ == "__main__":

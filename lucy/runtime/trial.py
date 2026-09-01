@@ -2490,7 +2490,14 @@ def main() -> int:
                 "receipted after the run, but codex exec exposes no authoritative "
                 "per-run dollar charge"
             )
-        print(json.dumps({"cost_estimate": estimate}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"cost_estimate": estimate},
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+        )
         # Target-shape guards. Empty (or binary-only) repositories are a
         # clean, honest non-event, not an error; tiny ones get a warning
         # rather than a cryptic planter failure ten minutes in.

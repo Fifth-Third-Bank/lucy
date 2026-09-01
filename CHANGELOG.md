@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.1 - 2026-09-01
+
+Small installation and terminal-output corrections:
+
+- Render human-facing cost-estimate text as UTF-8 so punctuation such as an
+  em dash is displayed directly instead of as a `\u2014` escape sequence.
+- Replace the installer's PEP 668-incompatible recovery command with
+  copy-pasteable virtual-environment setup and usage guidance.
+- Keep `make check` runnable from the public archive by skipping only
+  source-only Jenkins policy assertions when internal build metadata is
+  absent. Internal checkouts that contain the publishing configuration still
+  validate it. Document installation of the development dependencies.
+
 ## 1.1.0 - 2026-09-01
 
 Initial public release of LUCY, an agentic source-code vulnerability scanning

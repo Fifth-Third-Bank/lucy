@@ -2,7 +2,7 @@
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-%E2%89%A5%203.11-blue)
-![version](https://img.shields.io/badge/version-1.1.0-blue)
+![version](https://img.shields.io/badge/version-1.1.1-blue)
 ![host](https://img.shields.io/badge/hosts-Claude%20Code%20%7C%20Codex%20CLI-orange)
 ![output](https://img.shields.io/badge/output-gated%20JSON%20%2B%20SARIF%202.1.0-green)
 
@@ -110,14 +110,16 @@ Deep dives: [building a super-repo](docs/super-repo.md) ·
 
 ```bash
 git clone <this-repo> && cd lucy
-python3 -m pip install .                # LUCY + required Python dependencies
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install .                 # LUCY + required Python dependencies
 ./install.sh                            # skill, agents, and lucy CLI (~/.local/bin)
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Use the same `python3` environment for installation and operation. If your
-system Python does not permit package installation, create and activate a
-virtual environment first. `install.sh` validates Python, Git, tree-sitter, and
+Keep this virtual environment active when running LUCY, or invoke
+`.venv/bin/lucy` directly. This avoids modifying an externally managed system
+Python environment. `install.sh` validates Python, Git, tree-sitter, and
 the presence of at least one review host before writing anything. On Linux it
 also requires `bwrap` when Codex is the only installed host; when Claude is
 also available, installation can proceed but Codex runs remain blocked until
@@ -404,8 +406,15 @@ Report vulnerabilities in LUCY itself privately - see
 ## Development
 
 ```bash
+python -m pip install -e '.[dev]'
 make check      # unit + e2e pipeline tests, metadata/toolbox checks
 ```
+
+Public release archives intentionally omit the source-only `.jenkins`
+publishing configuration. In those archives, `make check` skips only the
+Jenkins archive-policy and deployment-tag assertions; all product, metadata,
+and toolbox checks still run. Internal checkouts containing `.jenkins` continue
+to validate those publishing controls.
 
 The end-to-end test drives the full pipeline (plant → read → court →
 finalize → recall → gates) on a bundled multi-language fixture and asserts
