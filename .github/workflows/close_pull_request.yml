@@ -1,0 +1,46 @@
+name: Close external pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+# pull_request_target provides write access for pull requests from forks. This
+# workflow intentionally does not check out or execute pull request code.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: close-pull-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  close-external-pull-request:
+    # Maintainers and the explicitly listed automation accounts may open PRs.
+    if: >-
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'MEMBER' &&
+      github.event.pull_request.author_association != 'COLLABORATOR' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'renovate[bot]' &&
+      github.event.pull_request.user.login != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Explain and close the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api \
+            --method POST \
+            "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
+            -f body='Thanks for your interest. This repository does not accept external pull requests. Please open an issue so the maintainers can discuss the proposed change.'
+
+          gh api \
+            --method PATCH \
+            "repos/${GH_REPO}/pulls/${PR_NUMBER}" \
+            -f state='closed'

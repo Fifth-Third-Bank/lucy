@@ -1,0 +1,52 @@
+# ledger-api runtime configuration (fixture estate).
+# All secrets are resolved from the environment at startup; nothing
+# sensitive is committed to this file.
+spring:
+  application:
+    name: ledger-api
+  datasource:
+    # sslmode=verify-full: server certificate AND hostname are verified.
+    url: jdbc:postgresql://ledger-db.internal.example.invalid:5432/ledger?sslmode=verify-full
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+      max-lifetime: 1800000
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Tokens are validated against the issuer's JWKS; audience is
+          # enforced so tokens minted for other services are rejected.
+          issuer-uri: https://auth.example.invalid/realms/demo
+          audiences:
+            - ledger-api
+
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: ${TLS_KEYSTORE_PATH}
+    key-store-password: ${TLS_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Only liveness/readiness style endpoints are exposed.
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: INFO

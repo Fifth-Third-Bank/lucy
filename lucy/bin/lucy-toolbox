@@ -1,0 +1,40 @@
+#!/usr/bin/env sh
+# Pinned wrapper: run one hash-verified toolbox script by basename.
+# Usage: lucy-toolbox <script.py> [args...]
+# Refuses path separators so only bundled toolbox scripts are reachable.
+set -eu
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SKILL_DIR=$(dirname -- "$SELF_DIR")
+case "$(basename -- "$SKILL_DIR")" in
+  lucy) : ;;
+  *) SKILL_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/lucy" ;;
+esac
+TOOLBOX="$SKILL_DIR/toolbox"
+SCRIPT="${1:?usage: lucy-toolbox <script.py> [args...]}"
+shift
+case "$SCRIPT" in
+  */*|.*) echo "lucy-toolbox: script must be a bare toolbox basename" >&2; exit 2 ;;
+esac
+# Reviewer-reachable allowlist: only the scripts the skill actually invokes.
+# Everything else in the toolbox (gates, HERMETIC_RUNNER) is launcher- or
+# operator-invoked by absolute path, never through this wrapper.
+case "$SCRIPT" in
+  census.py|detector_battery_v3_3_1.py) : ;;
+  *) echo "lucy-toolbox: '$SCRIPT' is not reviewer-invocable (allowed: census.py, detector_battery_v3_3_1.py)" >&2; exit 2 ;;
+esac
+[ -f "$TOOLBOX/$SCRIPT" ] || { echo "lucy-toolbox: no such toolbox script: $SCRIPT" >&2; exit 2; }
+# Execution-time hash pin: install-time verification alone leaves the
+# installed copy unguarded for its whole service life.
+PYTHONSAFEPATH=1 python3 - "$TOOLBOX" "$SCRIPT" <<'VERIFY' || { echo "lucy-toolbox: '$SCRIPT' failed its pinned-hash check; reinstall to restore assets" >&2; exit 3; }
+import hashlib, json, sys
+from pathlib import Path
+toolbox, script = Path(sys.argv[1]), sys.argv[2]
+manifest = json.loads((toolbox / "assets.json").read_text())
+pins = {a["path"]: a["sha256"] for a in manifest.get("assets", [])}
+expected = pins.get(script)
+actual = hashlib.sha256((toolbox / script).read_bytes()).hexdigest()
+sys.exit(0 if expected == actual else 1)
+VERIFY
+# Pinned assets carry docstring escapes newer Pythons warn about; the bytes
+# are frozen, so silence the cosmetic SyntaxWarning at invocation.
+PYTHONWARNINGS="ignore::SyntaxWarning" exec python3 "$TOOLBOX/$SCRIPT" "$@"

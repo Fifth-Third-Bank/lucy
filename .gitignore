@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.lucy/
+docs/PORT_LOG.md
+
+# local security-review outputs
+/.scanner-state/
+/FINDINGS.md
+/findings.jsonl
+/findings.sarif

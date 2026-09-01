@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Pinned wrapper: deterministic unit partitioning for reader lanes.
+set -eu
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SKILL_DIR=$(dirname -- "$SELF_DIR")
+case "$(basename -- "$SKILL_DIR")" in
+  lucy) PKG_PARENT=$(dirname -- "$SKILL_DIR") ;;
+  *) PKG_PARENT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;
+esac
+PYTHONPATH="$PKG_PARENT" PYTHONSAFEPATH=1 exec python3 -c 'import sys, runpy; sys.path = [p for p in sys.path if p not in ("", ".")]; runpy.run_module("lucy.runtime.units", run_name="__main__")' "$@"

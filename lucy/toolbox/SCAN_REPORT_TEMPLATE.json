@@ -1,0 +1,35 @@
+{
+  "schema_version": "2.0",
+  "app": {
+    "cmdb_id": "<CMDB e.g. APP001>",
+    "app_name": "<human app name>",
+    "estate": "<repository slug e.g. example-service>",
+    "scan_run": "<scanner run id e.g. lucy r-example>",
+    "scanner_version": "<producing scanner release e.g. 1.0.0>",
+    "sealed_date": "<YYYY-MM-DD>"
+  },
+  "declared_counts": { "total": 0, "pc": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "chains": 0 },
+  "findings": [
+    {
+      "id": "<unique, e.g. F-0001; never empty, never '...'>",
+      "severity": "<PRIORITIZED_CRITICAL | CRITICAL | HIGH | MEDIUM | LOW  (no INFO)>",
+      "repo": "<repository = first path segment, e.g. example-service>",
+      "path": "<location within the repo incl. line, e.g. src/main/java/.../File.java:83>",
+      "title": "<full claim/description, verbatim, untruncated, no trailing ellipsis>",
+      "also_affects": ["<other repo/path:line this systemic defect affects — omit the field entirely for single-site findings>"],
+      "cwe_canonical": "<CWE-NNN — a real mapped CWE, never CWE-0/none>",
+      "fix": "<one/two-sentence remediation for THIS finding, or null if genuinely none>",
+      "pc_reason": "<PRESENT ONLY when severity=PRIORITIZED_CRITICAL: why this qualifies as a PC-1 (four-clause justification). Omit/null otherwise.>"
+    }
+  ],
+  "chains": [
+    {
+      "id": "<e.g. CHAIN-01>",
+      "title": "<one-line attack story>",
+      "status": "<confirmed | conditional>",
+      "hops": [
+        { "finding_id": "<must exist in findings[].id>", "note": "<optional: what this hop contributes>" }
+      ]
+    }
+  ]
+}

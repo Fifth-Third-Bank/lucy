@@ -1,0 +1,75 @@
+# CI pipeline for the fixture estate (never executed by a real runner).
+#
+# Trust boundary: the "build", "test", and "scan" stages run against
+# untrusted contributions (fork PRs) and are given NO secrets. Only the
+# "deploy" stage, which runs exclusively on protected branches with a
+# reviewed environment, receives deploy credentials.
+
+name: payments-estate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # Untrusted context: no secrets are referenced anywhere in this job.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build all services
+        run: make build-all
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: build
+    # Unit and contract tests; still zero secrets available here.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run unit test suites
+        run: make test-all
+      - name: Publish test reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
+
+  scan:
+    runs-on: ubuntu-24.04
+    needs: build
+    # Static analysis plus the container image scanner. Scanner output is
+    # advisory on PRs and blocking on main.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Dependency audit
+        run: make audit-deps
+      - name: Container image scanner
+        run: make scan-images
+      - name: Upload scanner findings
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-findings
+          path: findings/
+
+  deploy:
+    runs-on: ubuntu-24.04
+    needs: [test, scan]
+    # Trusted context only: never runs for pull_request events, so fork
+    # code can never observe these credentials.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Deploy manifests
+        env:
+          KUBE_TOKEN: ${{ secrets.DEPLOY_KUBE_TOKEN }}
+        run: make deploy ENVIRONMENT=production

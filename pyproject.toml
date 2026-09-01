@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lucy-scanner"
+version = "1.0.0"
+description = "LUCY: agentic verified source-code vulnerability review with adversarial verification and planted-recall measurement"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "tree-sitter-language-pack>=0.13",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+lucy = "lucy.runtime.trial:main"
+
+[tool.setuptools.packages.find]
+include = ["lucy*"]
+
+[tool.setuptools.package-data]
+lucy = [
+    "SKILL.md",
+    "agents/*.md",
+    "planter/*",
+    "toolbox/*",
+    "bin/*",
+]

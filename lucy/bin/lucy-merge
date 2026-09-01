@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# Pinned wrapper: merge lane staging into candidates via the LUCY runtime.
+# Resolves the installed skill regardless of CLAUDE_CONFIG_DIR; PYTHONPATH is
+# set internally so callers never need env-var-prefixed commands.
+set -eu
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SKILL_DIR=$(dirname -- "$SELF_DIR")
+case "$(basename -- "$SKILL_DIR")" in
+  lucy) PKG_PARENT=$(dirname -- "$SKILL_DIR") ;;
+  *) PKG_PARENT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;
+esac
+PYTHONPATH="$PKG_PARENT" PYTHONSAFEPATH=1 exec python3 -c 'import sys, runpy; sys.path = [p for p in sys.path if p not in ("", ".")]; sys.argv.insert(1, "merge"); runpy.run_module("lucy.runtime.artifacts", run_name="__main__")' "$@"

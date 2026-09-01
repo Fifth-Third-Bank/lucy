@@ -1,0 +1,38 @@
+# crypto-lib: shared AEAD envelope-encryption helpers (fixture estate).
+# Published to an internal index only in the real world; here it is a
+# never-installed test fixture for the LUCY scanner suites.
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "demo-crypto-lib"
+version = "1.3.0"
+description = "AEAD envelope encryption helpers shared across demo services"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+  { name = "Platform Security", email = "dev@example.invalid" },
+]
+dependencies = [
+  "cryptography>=42.0,<43",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.1",
+  "pytest-cov>=5.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cryptolib"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+source = ["cryptolib"]
+branch = true

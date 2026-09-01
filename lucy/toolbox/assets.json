@@ -1,0 +1,96 @@
+{
+  "asset_count": 18,
+  "assets": [
+    {
+      "path": "HERMETIC_RUNNER.py",
+      "sha256": "c0db5ed2f84279bb9afaa67f73d6cc0d20e4c81d304248b66c7df52d3f175801",
+      "size": 2853
+    },
+    {
+      "path": "LENS_BRIEFS.md",
+      "sha256": "d4dbb453d0536e3db743507e318e901ed67ddca69620767f86184383a6fcdb6d",
+      "size": 11889
+    },
+    {
+      "path": "SCAN_REPORT_CONTRACT.md",
+      "sha256": "12143af67fb5312bfaebe497d49861bbae8484882bf36a21451469ad6cd10a33",
+      "size": 5192
+    },
+    {
+      "path": "SCAN_REPORT_TEMPLATE.json",
+      "sha256": "1ecf656357bfa485096029b3bc2a6a7185e6f5573d5405a6d629a269e9459383",
+      "size": 1605
+    },
+    {
+      "path": "SEAL_CARD_TEMPLATE.md",
+      "sha256": "c88971f3993c63dfef42b01152d10d57851abc698be22707936fbcc4d198efda",
+      "size": 4985
+    },
+    {
+      "path": "SEVERITY_RUBRIC.md",
+      "sha256": "16239e95e1707e422e4c05925070239adc8e6d77ef182a7c22ca17ff93c24e0e",
+      "size": 5774
+    },
+    {
+      "path": "census.py",
+      "sha256": "2ac62e92279483a81e37fc0178b49dfe8d61848a308f85d56f352337c9d472dd",
+      "size": 8351
+    },
+    {
+      "path": "certification_gate.py",
+      "sha256": "08931dd3b51fac1fdfd2dba14db0dcaa870ef7aed7de662ac518142f4b403ccb",
+      "size": 14720
+    },
+    {
+      "path": "conservation_gate.py",
+      "sha256": "e81396dabab65e5aa0ca9b4c2d361b0e3347bf52bb069f48f53af4d5c2ed566f",
+      "size": 1637
+    },
+    {
+      "path": "detector_battery_v3_3_1.py",
+      "sha256": "16e88b2a3202e4dcb32f19f76c8bbe9d88a590a05526861ec98a3a22534fbd9f",
+      "size": 7718
+    },
+    {
+      "path": "gates_selftest.py",
+      "sha256": "fe29a4dc2bd29697c4674d4605102cf36987a71172f642e33962da96beb8a6e8",
+      "size": 3260
+    },
+    {
+      "path": "mint_canaries.py",
+      "sha256": "df7b5db586e2e31606b0420a26ce2d480d76f3df8da94ac9a3778cc0cc49f70e",
+      "size": 4223
+    },
+    {
+      "path": "mutation_battery.py",
+      "sha256": "6780ff39dae298db57348aec77034f1ec42c0b50a89ddd34b7078aa3084ee174",
+      "size": 1804
+    },
+    {
+      "path": "scam_battery_v1_1.py",
+      "sha256": "38e3aa616257bf9dde196c1cc294bfb298fec54013e4255b753cf464dd09ac23",
+      "size": 3838
+    },
+    {
+      "path": "scan_report_gate.py",
+      "sha256": "71c551c33d6f6de86d04dc943acbe2716f1b9e79ae35899c96fc30491226625c",
+      "size": 16960
+    },
+    {
+      "path": "seal_card_gate.py",
+      "sha256": "befa4b1fe27e2b15e42ccf99fc2eeba0c782c6174838aae4ac9ccbce5768e234",
+      "size": 34249
+    },
+    {
+      "path": "token_gate.py",
+      "sha256": "a698f6d3a4cda5366b94888642ad440496a88eec05bf0cfb063ce514f8d28354",
+      "size": 1854
+    },
+    {
+      "path": "visitation_check.py",
+      "sha256": "f675dfcd2939f3b3d49d83e62dc80c23eadfc6f3b6bfe8bb700cf8e339896980",
+      "size": 2698
+    }
+  ],
+  "schema": "lucy-toolbox-assets/v1"
+}

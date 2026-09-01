@@ -1,0 +1,19 @@
+{
+  "schema": "lucy-priors/oss-1",
+  "targets": [
+    {
+      "id": "HIST-001",
+      "path": "apps/example-api/src/auth/middleware.py",
+      "line": 42,
+      "family": "L1-auth",
+      "title": "Session middleware accepted expired tokens when the clock-skew allowance was misconfigured."
+    },
+    {
+      "id": "HIST-002",
+      "path": "infra/gateway.tf",
+      "line": 17,
+      "family": "L4-infra",
+      "title": "A gateway route was provisioned with authorization type NONE in a prior release."
+    }
+  ]
+}

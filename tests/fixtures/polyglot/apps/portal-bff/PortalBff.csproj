@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    portal-bff: customer portal backend-for-frontend (fixture estate).
+    Compile-plausible only; never built or deployed. All hostnames in
+    configuration use example.invalid and all secrets come from the
+    environment at runtime.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PortalBff</RootNamespace>
+    <AssemblyName>PortalBff</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Bearer-token authentication for the API surface. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Unit test project references this assembly; kept internal-visible
+         so the scanner e2e suite can assert on handler wiring. -->
+    <InternalsVisibleTo Include="PortalBff.Tests" />
+  </ItemGroup>
+
+</Project>

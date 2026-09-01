@@ -1,0 +1,63 @@
+{
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "schema",
+  "canaries"
+ ],
+ "properties": {
+  "schema": {
+   "const": "lucy-answer-key/v1"
+  },
+  "canaries": {
+   "type": "array",
+   "minItems": 8,
+   "maxItems": 8,
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "slot",
+     "family",
+     "path",
+     "line",
+     "title",
+     "reachability"
+    ],
+    "properties": {
+     "slot": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+     },
+     "family": {
+      "enum": [
+       "L1-auth",
+       "L2-secrets",
+       "L3-injection",
+       "L4-infra"
+      ]
+     },
+     "path": {
+      "type": "string",
+      "minLength": 1
+     },
+     "line": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+     },
+     "reachability": {
+      "type": "string",
+      "minLength": 12,
+      "description": "concrete caller/route/config path that makes the defect real; recorded for adjudication, never shown to reviewers"
+     }
+    }
+   }
+  }
+ }
+}

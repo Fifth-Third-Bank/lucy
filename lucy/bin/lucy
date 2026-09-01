@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+# LUCY command-line entry point.
+#   lucy scan   --target <repo> --results <dir>   full review + certification
+#   lucy launch --target <repo> --results <dir>   trial (no certification)
+#   lucy export <CMDB>_SCAN_REPORT.json           derive SARIF from gated report
+set -eu
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SKILL_DIR=$(dirname -- "$SELF_DIR")
+case "$(basename -- "$SKILL_DIR")" in
+  lucy) PKG_PARENT=$(dirname -- "$SKILL_DIR") ;;
+  *) PKG_PARENT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" ;;
+esac
+PYTHONPATH="$PKG_PARENT" PYTHONSAFEPATH=1 exec python3 -c 'import sys, runpy; sys.path = [p for p in sys.path if p not in ("", ".")]; runpy.run_module("lucy.runtime.trial", run_name="__main__")' "$@"
